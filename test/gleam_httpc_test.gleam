@@ -1,8 +1,11 @@
+import gleam/bit_array
+import gleam/bytes_tree
 import gleam/http.{Get, Head, Options}
 import gleam/http/request
 import gleam/http/response
 import gleam/httpc
 import gleam/string
+import gleam/string_tree
 import gleeunit
 
 pub fn main() {
@@ -132,6 +135,27 @@ pub fn custom_user_agent_test() {
   let assert Ok(resp) =
     httpc.send(request.set_header(req, "user-agent", "gleam-test"))
   assert string.contains(resp.body, "\"User-Agent\": \"gleam-test")
+}
+
+pub fn bytes_tree_test() {
+  let body =
+    string_tree.new()
+    |> string_tree.append("Hello")
+    |> string_tree.append(" ")
+    |> string_tree.append("Joe")
+    |> string_tree.append("!")
+    |> bytes_tree.from_string_tree
+
+  let assert Ok(req) = request.to("https://echo.free.beeceptor.com")
+
+  let assert Ok(resp) =
+    req
+    |> request.set_method(http.Post)
+    |> request.set_body(body)
+    |> httpc.send_tree
+
+  let assert Ok(body_string) = bit_array.to_string(resp.body)
+  assert string.contains(body_string, "\"rawBody\": \"Hello Joe!\"")
 }
 
 pub fn timeout_success_test() {

@@ -1,5 +1,9 @@
 # Changelog
 
+## v5.1.0 - 2026-??-??
+
+- Added the `send_tree` and `dispatch_tree` functions to send data using the `BytesTree` type
+
 ## v5.0.0 - 2025-07-12
 
 - Added the `timeout` configuration option and associated error.

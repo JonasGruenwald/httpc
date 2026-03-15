@@ -1,4 +1,5 @@
 import gleam/bit_array
+import gleam/bytes_tree.{type BytesTree}
 import gleam/dynamic.{type Dynamic}
 import gleam/erlang/charlist.{type Charlist}
 import gleam/http.{type Method}
@@ -61,10 +62,10 @@ type ErlVerifyOption {
 
 @external(erlang, "httpc", "request")
 fn erl_request(
-  a: Method,
-  b: #(Charlist, List(#(Charlist, Charlist)), Charlist, BitArray),
-  c: List(ErlHttpOption),
-  d: List(ErlOption),
+  method: Method,
+  request: #(Charlist, List(#(Charlist, Charlist)), Charlist, body_type),
+  http_options: List(ErlHttpOption),
+  options: List(ErlOption),
 ) -> Result(
   #(#(Charlist, Int, Charlist), List(#(Charlist, Charlist)), BitArray),
   Dynamic,
@@ -72,10 +73,10 @@ fn erl_request(
 
 @external(erlang, "httpc", "request")
 fn erl_request_no_body(
-  a: Method,
-  b: #(Charlist, List(#(Charlist, Charlist))),
-  c: List(ErlHttpOption),
-  d: List(ErlOption),
+  method: Method,
+  request: #(Charlist, List(#(Charlist, Charlist))),
+  http_options: List(ErlHttpOption),
+  options: List(ErlOption),
 ) -> Result(
   #(#(Charlist, Int, Charlist), List(#(Charlist, Charlist)), BitArray),
   Dynamic,
@@ -89,7 +90,7 @@ fn string_header(header: #(Charlist, Charlist)) -> #(String, String) {
 // TODO: refine error type
 /// Send a HTTP request of binary data using the default configuration.
 ///
-/// If you wish to use some other configuration use `dispatch_bits` instead.
+/// If you wish to use some other configuration use `dispatch_tree` instead.
 ///
 pub fn send_bits(
   req: Request(BitArray),
@@ -99,11 +100,23 @@ pub fn send_bits(
 }
 
 // TODO: refine error type
-/// Send a HTTP request of binary data.
+/// Send a HTTP request of binary data with the `BytesTree` type using the default configuration.
 ///
-pub fn dispatch_bits(
+/// If you wish to use some other configuration use `dispatch_bits` instead.
+///
+pub fn send_tree(
+  req: Request(BytesTree),
+) -> Result(Response(BitArray), HttpError) {
+  configure()
+  |> dispatch_tree(req)
+}
+
+// TODO: refine error type
+/// Send a HTTP request.
+///
+fn do_dispatch(
   config: Configuration,
-  req: Request(BitArray),
+  req: Request(body_type),
 ) -> Result(Response(BitArray), HttpError) {
   let erl_url =
     req
@@ -142,6 +155,26 @@ pub fn dispatch_bits(
 
   let #(#(_version, status, _status), headers, resp_body) = response
   Ok(Response(status, list.map(headers, string_header), resp_body))
+}
+
+// TODO: refine error type
+/// Send a HTTP request of binary data.
+///
+pub fn dispatch_bits(
+  config: Configuration,
+  req: Request(BitArray),
+) -> Result(Response(BitArray), HttpError) {
+  do_dispatch(config, req)
+}
+
+// TODO: refine error type
+/// Send a HTTP request of binary data with the `BytesTree` type.
+///
+pub fn dispatch_tree(
+  config: Configuration,
+  req: Request(BytesTree),
+) -> Result(Response(BitArray), HttpError) {
+  do_dispatch(config, req)
 }
 
 /// Configuration that can be used to send HTTP requests.
