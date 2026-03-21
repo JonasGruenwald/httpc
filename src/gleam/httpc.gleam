@@ -9,6 +9,12 @@ import gleam/list
 import gleam/result
 import gleam/uri
 
+pub type RequestId
+
+pub type AsyncReply(a, b) {
+  AsyncReply(request_id: RequestId, payload: Result(a, b))
+}
+
 pub type HttpError {
   /// The response body contained non-UTF-8 data, but UTF-8 data was expected.
   InvalidUtf8Response
@@ -29,6 +35,14 @@ fn default_user_agent() -> #(Charlist, Charlist)
 @external(erlang, "gleam_httpc_ffi", "normalise_error")
 fn normalise_error(error: Dynamic) -> HttpError
 
+@external(erlang, "gleam_httpc_ffi", "normalise_reply_info")
+fn normalize_reply_info(
+  info: Dynamic,
+) -> AsyncReply(
+  #(#(Charlist, Int, Charlist), List(#(Charlist, Charlist)), BitArray),
+  HttpError,
+)
+
 type ErlHttpOption {
   Ssl(List(ErlSslOption))
   Autoredirect(Bool)
@@ -42,6 +56,8 @@ type BodyFormat {
 type ErlOption {
   BodyFormat(BodyFormat)
   SocketOpts(List(SocketOpt))
+  Sync(Bool)
+  Receiver(fn(Dynamic) -> Nil)
 }
 
 type SocketOpt {
@@ -72,6 +88,14 @@ fn erl_request(
 )
 
 @external(erlang, "httpc", "request")
+fn erl_request_async(
+  method: Method,
+  request: #(Charlist, List(#(Charlist, Charlist)), Charlist, body_type),
+  http_options: List(ErlHttpOption),
+  options: List(ErlOption),
+) -> Result(RequestId, Dynamic)
+
+@external(erlang, "httpc", "request")
 fn erl_request_no_body(
   method: Method,
   request: #(Charlist, List(#(Charlist, Charlist))),
@@ -81,6 +105,14 @@ fn erl_request_no_body(
   #(#(Charlist, Int, Charlist), List(#(Charlist, Charlist)), BitArray),
   Dynamic,
 )
+
+@external(erlang, "httpc", "request")
+fn erl_request_no_body_async(
+  method: Method,
+  request: #(Charlist, List(#(Charlist, Charlist))),
+  http_options: List(ErlHttpOption),
+  options: List(ErlOption),
+) -> Result(RequestId, Dynamic)
 
 fn string_header(header: #(Charlist, Charlist)) -> #(String, String) {
   let #(k, v) = header
@@ -97,6 +129,14 @@ pub fn send_bits(
 ) -> Result(Response(BitArray), HttpError) {
   configure()
   |> dispatch_bits(req)
+}
+
+pub fn send_bits_async(
+  req: Request(BitArray),
+  callback: fn(AsyncReply(Response(BitArray), HttpError)) -> Nil,
+) -> Result(RequestId, HttpError) {
+  configure()
+  |> dispatch_bits_async(req, callback)
 }
 
 // TODO: refine error type
@@ -157,6 +197,75 @@ fn do_dispatch(
   Ok(Response(status, list.map(headers, string_header), resp_body))
 }
 
+fn do_dispatch_async(
+  config: Configuration,
+  req: Request(body_type),
+  callback: fn(AsyncReply(Response(BitArray), HttpError)) -> Nil,
+) -> Result(RequestId, HttpError) {
+  let erl_url =
+    req
+    |> request.to_uri
+    |> uri.to_string
+    |> charlist.from_string
+  let erl_headers = prepare_headers(req.headers)
+  let erl_http_options = [
+    Autoredirect(config.follow_redirects),
+    Timeout(config.timeout),
+  ]
+  let erl_http_options = case config.verify_tls {
+    True -> erl_http_options
+    False -> [Ssl([Verify(VerifyNone)]), ..erl_http_options]
+  }
+  let erl_options = [
+    BodyFormat(Binary),
+    SocketOpts([Ipfamily(Inet6fb4)]),
+    Sync(False),
+    Receiver(fn(reply_info) {
+      let reply = normalize_reply_info(reply_info)
+      case reply {
+        AsyncReply(request_id, Error(e)) -> {
+          callback(AsyncReply(request_id:, payload: Error(e)))
+          Nil
+        }
+        AsyncReply(request_id, Ok(reply)) -> {
+          let #(#(_version, status, _status), headers, resp_body) = reply
+          callback(AsyncReply(
+            request_id:,
+            payload: Ok(Response(
+              status,
+              list.map(headers, string_header),
+              resp_body,
+            )),
+          ))
+          Nil
+        }
+      }
+    }),
+  ]
+
+  case req.method {
+    http.Options | http.Head | http.Get -> {
+      let erl_req = #(erl_url, erl_headers)
+      erl_request_no_body_async(
+        req.method,
+        erl_req,
+        erl_http_options,
+        erl_options,
+      )
+    }
+    _ -> {
+      let erl_content_type =
+        req
+        |> request.get_header("content-type")
+        |> result.unwrap("application/octet-stream")
+        |> charlist.from_string
+      let erl_req = #(erl_url, erl_headers, erl_content_type, req.body)
+      erl_request_async(req.method, erl_req, erl_http_options, erl_options)
+    }
+  }
+  |> result.map_error(normalise_error)
+}
+
 // TODO: refine error type
 /// Send a HTTP request of binary data.
 ///
@@ -165,6 +274,16 @@ pub fn dispatch_bits(
   req: Request(BitArray),
 ) -> Result(Response(BitArray), HttpError) {
   do_dispatch(config, req)
+}
+
+/// Send a HTTP request of binary data.
+///
+pub fn dispatch_bits_async(
+  config: Configuration,
+  req: Request(BitArray),
+  callback: fn(AsyncReply(Response(BitArray), HttpError)) -> Nil,
+) -> Result(RequestId, HttpError) {
+  do_dispatch_async(config, req, callback)
 }
 
 // TODO: refine error type
