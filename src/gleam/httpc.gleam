@@ -151,6 +151,14 @@ pub fn send_tree(
   |> dispatch_tree(req)
 }
 
+pub fn send_tree_async(
+  req: Request(BytesTree),
+  callback: fn(AsyncReply(Response(BitArray), HttpError)) -> Nil,
+) -> Result(RequestId, HttpError) {
+  configure()
+  |> dispatch_tree_async(req, callback)
+}
+
 // TODO: refine error type
 /// Send a HTTP request.
 ///
@@ -294,6 +302,14 @@ pub fn dispatch_tree(
   req: Request(BytesTree),
 ) -> Result(Response(BitArray), HttpError) {
   do_dispatch(config, req)
+}
+
+pub fn dispatch_tree_async(
+  config: Configuration,
+  req: Request(BytesTree),
+  callback: fn(AsyncReply(Response(BitArray), HttpError)) -> Nil,
+) -> Result(RequestId, HttpError) {
+  do_dispatch_async(config, req, callback)
 }
 
 /// Configuration that can be used to send HTTP requests.
